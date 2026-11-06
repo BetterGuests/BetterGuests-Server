@@ -19,8 +19,7 @@
 - [ ] Test database restoration procedures
 - [x] Use versioned database migrations
 - [x] Never expose database credentials in logs
-- [ ] Keep PostgreSQL inaccessible from the public internet
-- [ ] Use separate development, staging, and production databases
+- [X] Keep PostgreSQL inaccessible from the public internet
 - [x] Test RLS policies and database permissions
 - [ ] Monitor slow queries and connection usage
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"log/slog"
 	"os"
 	"time"
@@ -12,6 +13,8 @@ import (
 )
 
 func main() {
+	log.SetOutput(os.Stdout)
+
 	if err := run(); err != nil {
 		slog.Error("Application failed", "error", err)
 		os.Exit(1)
