@@ -19,6 +19,7 @@ import (
 	"syscall"
 
 	"github.com/BetterGuests/BetterGuests-Server/db/migrations"
+	"github.com/BetterGuests/BetterGuests-Server/internal/logging"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 )
@@ -29,6 +30,8 @@ var (
 )
 
 func main() {
+	logging.Configure()
+
 	if err := run(); err != nil {
 		slog.Error("Migration command failed", "error", err)
 		os.Exit(1)

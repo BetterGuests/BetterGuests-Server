@@ -100,7 +100,7 @@ func health(w http.ResponseWriter, r *http.Request) {
 		slog.Error("Server did not respond", "error", err)
 		return
 	}
-	slog.Info("Server is healthy")
+	slog.Debug("Server is healthy")
 }
 
 func ready(database databasePinger) http.HandlerFunc {

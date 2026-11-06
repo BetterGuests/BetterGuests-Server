@@ -4,19 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
 	"time"
 
 	"github.com/BetterGuests/BetterGuests-Server/db"
+	"github.com/BetterGuests/BetterGuests-Server/internal/logging"
 )
 
 func main() {
-	log.SetOutput(os.Stdout)
+	logging.Configure()
 
 	if err := run(); err != nil {
-		slog.Error("Application failed", "error", err)
+		slog.Error("Server failed", "error", err)
 		os.Exit(1)
 	}
 }

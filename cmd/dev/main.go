@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/BetterGuests/BetterGuests-Server/internal/logging"
 )
 
 type commandFunc func() error
@@ -17,6 +19,8 @@ type commandFunc func() error
 var errUsage = errors.New("usage: go run ./cmd/dev {setup|migrate|migration-status|test|run}")
 
 func main() {
+	logging.Configure()
+
 	if err := run(os.Args[1:]); err != nil {
 		slog.Error("Developer command failed", "error", err)
 		os.Exit(1)
