@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/BetterGuests/BetterGuests-Server/db"
+	"github.com/BetterGuests/BetterGuests-Server/internal/accounts"
+	"github.com/BetterGuests/BetterGuests-Server/internal/listings"
 	"github.com/BetterGuests/BetterGuests-Server/internal/logging"
+	"github.com/BetterGuests/BetterGuests-Server/internal/reviews"
 )
 
 func main() {
@@ -45,7 +49,16 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("CORS configuration: %w", err)
 	}
-	server, err := createServer(routes(pool, origins))
+	authenticator, err := accounts.NewTokenAuthenticator(os.Getenv("AUTH_JWT_SECRET"))
+	if err != nil {
+		return fmt.Errorf("authentication configuration: %w", err)
+	}
+	listingHandler := listings.NewHTTPHandler(listings.NewListingService(listings.NewPostgresListingStore(pool)))
+	reviewHandler := reviews.NewHTTPHandler(reviews.NewService(reviews.NewPostgresStore(pool)))
+	api := http.NewServeMux()
+	api.HandleFunc("POST /api/v1/listings", listingHandler.CreateListing)
+	api.HandleFunc("POST /api/v1/reviews", reviewHandler.CreateReview)
+	server, err := createServer(routes(pool, origins, authenticator.Middleware(api)))
 	if err != nil {
 		return fmt.Errorf("server creation: %w", err)
 	}

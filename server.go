@@ -76,11 +76,13 @@ func runServer(server *http.Server) error {
 	return nil
 }
 
-func routes(database databasePinger, origins []string) http.Handler {
+func routes(database databasePinger, origins []string, protected ...http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", health)
 	mux.HandleFunc("GET /ready", ready(database))
-	// Add more routes here
+	if len(protected) > 0 && protected[0] != nil {
+		mux.Handle("/api/v1/", protected[0])
+	}
 
 	return cors.Handler(cors.Options{
 		AllowedOrigins: origins,

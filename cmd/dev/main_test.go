@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -29,5 +30,28 @@ export DB_EXPECTED_ROLE='betterguests_app'
 func TestParseEnvRejectsMalformedLine(t *testing.T) {
 	if _, err := parseEnv(strings.NewReader("DATABASE_URL")); err == nil {
 		t.Fatal("expected malformed environment line to fail")
+	}
+}
+
+func TestEnvironmentWithOverridesReplacesDatabaseURLs(t *testing.T) {
+	environment := environmentWithOverrides([]string{
+		"PATH=/bin",
+		"DATABASE_URL=postgres://production.example/database",
+		"TEST_DATABASE_URL=postgres://production.example/test",
+	}, map[string]string{
+		"DATABASE_URL":      testDatabaseURL,
+		"TEST_DATABASE_URL": testDatabaseURL,
+	})
+
+	if !slices.Contains(environment, "DATABASE_URL="+testDatabaseURL) {
+		t.Fatal("DATABASE_URL was not overridden with the local test URL")
+	}
+	if !slices.Contains(environment, "TEST_DATABASE_URL="+testDatabaseURL) {
+		t.Fatal("TEST_DATABASE_URL was not overridden with the local test URL")
+	}
+	for _, entry := range environment {
+		if strings.Contains(entry, "production.example") {
+			t.Fatalf("production URL leaked into test environment: %q", entry)
+		}
 	}
 }

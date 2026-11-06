@@ -133,6 +133,12 @@ func Open(ctx context.Context, config Config) (*pgxpool.Pool, error) {
 		poolConfig.ConnConfig.RuntimeParams = map[string]string{}
 	}
 	poolConfig.ConnConfig.RuntimeParams["application_name"] = config.ApplicationName
+	poolConfig.AfterRelease = func(connection *pgx.Conn) bool {
+		resetCtx, cancel := context.WithTimeout(context.Background(), config.PingTimeout)
+		defer cancel()
+		_, err := connection.Exec(resetCtx, "RESET ALL")
+		return err == nil
+	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {

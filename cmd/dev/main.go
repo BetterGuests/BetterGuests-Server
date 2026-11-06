@@ -18,6 +18,12 @@ type commandFunc func() error
 
 var errUsage = errors.New("usage: go run ./cmd/dev {setup|migrate|migration-status|test|run}")
 
+const (
+	testComposeFile          = "compose.test.yaml"
+	testDatabaseURL          = "postgres://betterguests_app:betterguests_app_test@127.0.0.1:55432/betterguests_test?sslmode=disable"
+	testMigrationDatabaseURL = "postgres://betterguests_migrator:betterguests_migrator_test@127.0.0.1:55432/betterguests_test?sslmode=disable"
+)
+
 func main() {
 	logging.Configure()
 
@@ -64,11 +70,50 @@ func migrationStatus() error {
 	return executeWithEnv("go", "run", "./cmd/migrate", "status")
 }
 
-func test() error {
-	if err := loadEnvFileIfPresent(".env"); err != nil {
+func test() (err error) {
+	compose := []string{"compose", "-f", testComposeFile}
+
+	// Always start from an empty, disposable database so tests cannot depend
+	// on data left by a previous run.
+	if err := execute("docker", append(compose, "down", "--volumes", "--remove-orphans")...); err != nil {
 		return err
 	}
-	return execute("go", "test", "-count=1", "./...")
+	defer func() {
+		cleanupErr := execute("docker", append(compose, "down", "--volumes", "--remove-orphans")...)
+		if err == nil && cleanupErr != nil {
+			err = cleanupErr
+		}
+	}()
+
+	if err := execute("docker", append(compose, "up", "--detach", "--wait")...); err != nil {
+		return err
+	}
+	if err := execute(
+		"docker",
+		append(compose,
+			"exec", "-T", "postgres",
+			"psql", "--username", "postgres", "--dbname", "betterguests_test",
+			"--set", "ON_ERROR_STOP=1",
+			"--file", "/betterguests/db/test/001_local_roles.sql",
+		)...,
+	); err != nil {
+		return err
+	}
+
+	// These fixed loopback URLs deliberately override the shell and .env.
+	// TEST_* enables the database security suite; DATABASE_URL keeps any
+	// server-level tests on the same disposable database.
+	testEnv := map[string]string{
+		"DATABASE_URL":                testDatabaseURL,
+		"MIGRATION_DATABASE_URL":      testMigrationDatabaseURL,
+		"TEST_DATABASE_URL":           testDatabaseURL,
+		"TEST_MIGRATION_DATABASE_URL": testMigrationDatabaseURL,
+		"DB_EXPECTED_ROLE":            "betterguests_app",
+	}
+	if err := executeWithOverrides(testEnv, "go", "run", "./cmd/migrate", "up"); err != nil {
+		return err
+	}
+	return executeWithOverrides(testEnv, "go", "test", "-count=1", "./...")
 }
 
 func runServer() error {
@@ -227,13 +272,34 @@ func parseEnvValue(value string, lineNumber int) (string, error) {
 }
 
 func execute(name string, args ...string) error {
+	return executeWithOverrides(nil, name, args...)
+}
+
+func executeWithOverrides(overrides map[string]string, name string, args ...string) error {
 	command := exec.Command(name, args...)
 	command.Stdin = os.Stdin
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
-	command.Env = os.Environ()
+	command.Env = environmentWithOverrides(os.Environ(), overrides)
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("%s failed: %w", name, err)
 	}
 	return nil
+}
+
+func environmentWithOverrides(base []string, overrides map[string]string) []string {
+	environment := make([]string, 0, len(base)+len(overrides))
+	for _, entry := range base {
+		key, _, found := strings.Cut(entry, "=")
+		if found {
+			if _, overridden := overrides[key]; overridden {
+				continue
+			}
+		}
+		environment = append(environment, entry)
+	}
+	for key, value := range overrides {
+		environment = append(environment, key+"="+value)
+	}
+	return environment
 }
