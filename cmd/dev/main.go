@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +19,7 @@ var errUsage = errors.New("usage: go run ./cmd/dev {setup|migrate|migration-stat
 
 const (
 	testComposeFile          = "compose.test.yaml"
+	testComposeEnvFile       = "compose.test.env"
 	testDatabaseURL          = "postgres://betterguests_app:betterguests_app_test@127.0.0.1:55432/betterguests_test?sslmode=disable"
 	testMigrationDatabaseURL = "postgres://betterguests_migrator:betterguests_migrator_test@127.0.0.1:55432/betterguests_test?sslmode=disable"
 )
@@ -71,7 +71,9 @@ func migrationStatus() error {
 }
 
 func test() (err error) {
-	compose := []string{"compose", "-f", testComposeFile}
+	// Point Compose at a dedicated env file so its dotenv parser never has to
+	// read the server's .env, which may contain multi-line credentials.
+	compose := []string{"compose", "--env-file", testComposeEnvFile, "-f", testComposeFile}
 
 	// Always start from an empty, disposable database so tests cannot depend
 	// on data left by a previous run.
@@ -212,63 +214,110 @@ func applyEnv(values map[string]string) error {
 }
 
 func parseEnv(reader io.Reader) (map[string]string, error) {
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	// Normalize Windows line endings so multi-line values work on every
+	// platform without changing the value's own line breaks.
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
 	values := make(map[string]string)
-	scanner := bufio.NewScanner(reader)
-	lineNumber := 0
-	for scanner.Scan() {
-		lineNumber++
-		key, value, include, err := parseEnvLine(scanner.Text(), lineNumber)
+	for index := 0; index < len(lines); index++ {
+		line := strings.TrimSpace(lines[index])
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		line = strings.TrimPrefix(line, "export ")
+		key, rawValue, found := strings.Cut(line, "=")
+		if !found {
+			return nil, fmt.Errorf("line %d must use KEY=VALUE", index+1)
+		}
+
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return nil, fmt.Errorf("line %d has an empty key", index+1)
+		}
+
+		value, end, err := parseEnvValue(strings.TrimSpace(rawValue), lines, index)
 		if err != nil {
 			return nil, err
 		}
-		if !include {
-			continue
-		}
 		values[key] = value
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
+		index = end
 	}
 	return values, nil
 }
 
-func parseEnvLine(raw string, lineNumber int) (string, string, bool, error) {
-	line := strings.TrimSpace(raw)
-	if line == "" || strings.HasPrefix(line, "#") {
-		return "", "", false, nil
+// parseEnvValue reads a value that may be quoted across several lines. It
+// returns the decoded value and the index of the last line it consumed.
+func parseEnvValue(value string, lines []string, start int) (string, int, error) {
+	switch {
+	case strings.HasPrefix(value, "'"):
+		literal, end, err := readQuoted(value, lines, start, '\'')
+		if err != nil {
+			return "", 0, err
+		}
+		return literal[1 : len(literal)-1], end, nil
+	case strings.HasPrefix(value, "\""):
+		literal, end, err := readQuoted(value, lines, start, '"')
+		if err != nil {
+			return "", 0, err
+		}
+		// strconv.Unquote rejects literal newlines, so escape them first and
+		// let Unquote turn them back into the newlines the value carried.
+		unquoted, err := strconv.Unquote(strings.ReplaceAll(literal, "\n", "\\n"))
+		if err != nil {
+			return "", 0, fmt.Errorf("line %d has an invalid quoted value", start+1)
+		}
+		return unquoted, end, nil
+	default:
+		return value, start, nil
 	}
-
-	line = strings.TrimPrefix(line, "export ")
-	key, rawValue, found := strings.Cut(line, "=")
-	if !found {
-		return "", "", false, fmt.Errorf("line %d must use KEY=VALUE", lineNumber)
-	}
-
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return "", "", false, fmt.Errorf("line %d has an empty key", lineNumber)
-	}
-
-	value, err := parseEnvValue(strings.TrimSpace(rawValue), lineNumber)
-	if err != nil {
-		return "", "", false, err
-	}
-	return key, value, true, nil
 }
 
-func parseEnvValue(value string, lineNumber int) (string, error) {
-	if len(value) >= 2 && value[0] == '\'' && value[len(value)-1] == '\'' {
-		return value[1 : len(value)-1], nil
-	}
-	if !strings.HasPrefix(value, "\"") {
-		return value, nil
-	}
+// readQuoted returns the quoted literal, including its surrounding quotes, and
+// the index of the line where the closing quote was found.
+func readQuoted(value string, lines []string, start int, quote byte) (string, int, error) {
+	literal := value
+	line := start
+	for {
+		if index := closingQuote(literal, quote); index >= 0 {
+			trailing := strings.TrimSpace(literal[index+1:])
+			if trailing != "" && !strings.HasPrefix(trailing, "#") {
+				return "", 0, fmt.Errorf("line %d has unexpected text after the closing quote", line+1)
+			}
+			return literal[:index+1], line, nil
+		}
 
-	unquoted, err := strconv.Unquote(value)
-	if err != nil {
-		return "", fmt.Errorf("line %d has an invalid quoted value", lineNumber)
+		line++
+		if line >= len(lines) {
+			return "", 0, fmt.Errorf("line %d has an unterminated quoted value", start+1)
+		}
+		literal += "\n" + lines[line]
 	}
-	return unquoted, nil
+}
+
+// closingQuote finds the first closing quote after the opening quote. Only
+// double-quoted values treat a backslash as an escape, matching shell and Go
+// string-literal conventions.
+func closingQuote(value string, quote byte) int {
+	escaped := false
+	for index := 1; index < len(value); index++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if quote == '"' && value[index] == '\\' {
+			escaped = true
+			continue
+		}
+		if value[index] == quote {
+			return index
+		}
+	}
+	return -1
 }
 
 func execute(name string, args ...string) error {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/BetterGuests/BetterGuests-Server/db"
 	"github.com/BetterGuests/BetterGuests-Server/internal/accounts"
+	"github.com/BetterGuests/BetterGuests-Server/internal/auth"
 	"github.com/BetterGuests/BetterGuests-Server/internal/listings"
 	"github.com/BetterGuests/BetterGuests-Server/internal/logging"
 	"github.com/BetterGuests/BetterGuests-Server/internal/reviews"
@@ -49,10 +50,17 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("CORS configuration: %w", err)
 	}
-	authenticator, err := accounts.NewTokenAuthenticator(os.Getenv("AUTH_JWT_SECRET"))
+	firebaseConfig, err := auth.ConfigFromEnv()
 	if err != nil {
-		return fmt.Errorf("authentication configuration: %w", err)
+		return fmt.Errorf("firebase configuration: %w", err)
 	}
+	firebaseVerifier, err := auth.NewFirebaseTokenVerifier(ctx, firebaseConfig)
+	if err != nil {
+		return fmt.Errorf("firebase configuration: %w", err)
+	}
+	accountService := accounts.NewAccountService(accounts.NewPostgresAccountStore(pool))
+	authService := auth.NewAuthService(firebaseVerifier, accountService)
+	authenticator := auth.NewAuthenticator(authService)
 	listingHandler := listings.NewHTTPHandler(listings.NewListingService(listings.NewPostgresListingStore(pool)))
 	reviewHandler := reviews.NewHTTPHandler(reviews.NewService(reviews.NewPostgresStore(pool)))
 	api := http.NewServeMux()

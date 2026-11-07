@@ -76,3 +76,5 @@ func TestCreateListingReturnsStoreError(t *testing.T) {
 		t.Fatalf("expected store error, got %v", err)
 	}
 }
+
+// WE need all the other tests and functions here for listin.

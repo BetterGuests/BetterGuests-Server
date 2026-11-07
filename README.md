@@ -69,8 +69,10 @@ disposable local container and cannot inherit production credentials.
 - `DB_EXPECTED_ROLE=betterguests_app`
 - `DB_MAX_CONNS=5` initially; total across replicas must remain below the role's
   20-connection limit
-- `AUTH_JWT_SECRET`: at least 32 characters; signs HS256 bearer tokens whose
-  `sub` claim is the authenticated account UUID and whose `exp` claim is valid
+- `FIREBASE_PROJECT_ID`: Firebase project that issues the client ID tokens
+- `FIREBASE_CREDENTIALS_JSON`: Firebase Admin service-account JSON, either raw
+  or base64-encoded. The API verifies each bearer token with it and maps the
+  Firebase UID to a stable `app.accounts` row on first use.
 - `PORT`: HTTP port
 
 ## Tests
