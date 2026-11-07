@@ -105,6 +105,39 @@ func (service *ListingService) CreateListing(
 var ErrInvalidListing = errors.New("invalid listing")
 
 func validateCreateInput(input CreateListingInput) (CreateListingInput, error) {
+	input = trimCreateInput(input)
+
+	if err := validateCoreFields(input); err != nil {
+		return input, err
+	}
+	if err := validateAddress(input.Address); err != nil {
+		return input, err
+	}
+	if err := validateCapacity(input); err != nil {
+		return input, err
+	}
+	if err := validateCollectionSizes(input); err != nil {
+		return input, err
+	}
+
+	amenities, err := dedupeAmenities(input.Amenities)
+	if err != nil {
+		return input, err
+	}
+	input.Amenities = amenities
+
+	if err := validatePhotos(input.Photos); err != nil {
+		return input, err
+	}
+	if err := validateRules(input.Rules); err != nil {
+		return input, err
+	}
+	return input, nil
+}
+
+// trimCreateInput normalizes whitespace (and the country code's casing)
+// before any length or content checks run.
+func trimCreateInput(input CreateListingInput) CreateListingInput {
 	input.Title = strings.TrimSpace(input.Title)
 	input.Description = strings.TrimSpace(input.Description)
 	input.Address.Line1 = strings.TrimSpace(input.Address.Line1)
@@ -113,69 +146,97 @@ func validateCreateInput(input CreateListingInput) (CreateListingInput, error) {
 	input.Address.Region = strings.TrimSpace(input.Address.Region)
 	input.Address.PostalCode = strings.TrimSpace(input.Address.PostalCode)
 	input.Address.CountryCode = strings.ToUpper(strings.TrimSpace(input.Address.CountryCode))
+	return input
+}
+
+func validateCoreFields(input CreateListingInput) error {
 	if len(input.Title) < 4 || len(input.Title) > 120 {
-		return input, invalidListing("title must be 4-120 characters")
+		return invalidListing("title must be 4-120 characters")
 	}
 	if len(input.Description) < 20 || len(input.Description) > 5000 {
-		return input, invalidListing("description must be 20-5000 characters")
-	}
-	if input.Address.Line1 == "" || input.Address.City == "" || len(input.Address.CountryCode) != 2 {
-		return input, invalidListing("line1, city, and a two-letter country_code are required")
-	}
-	if input.Address.Latitude < -90 || input.Address.Latitude > 90 || input.Address.Longitude < -180 || input.Address.Longitude > 180 {
-		return input, invalidListing("latitude or longitude is out of range")
+		return invalidListing("description must be 20-5000 characters")
 	}
 	if !validListingType(input.Type) || !validPropertyType(input.PropertyType) {
-		return input, invalidListing("unsupported listing or property type")
+		return invalidListing("unsupported listing or property type")
 	}
+	return nil
+}
+
+func validateAddress(address Address) error {
+	if address.Line1 == "" || address.City == "" || len(address.CountryCode) != 2 {
+		return invalidListing("line1, city, and a two-letter country_code are required")
+	}
+	if address.Latitude < -90 || address.Latitude > 90 || address.Longitude < -180 || address.Longitude > 180 {
+		return invalidListing("latitude or longitude is out of range")
+	}
+	return nil
+}
+
+func validateCapacity(input CreateListingInput) error {
 	if input.MaxGuests < 1 || input.MaxGuests > 50 {
-		return input, invalidListing("max_guests must be between 1 and 50")
+		return invalidListing("max_guests must be between 1 and 50")
 	}
 	if input.MinimumAgeToBook < 18 || input.MinimumAgeToBook > 99 {
-		return input, invalidListing("minimum_age_to_book must be between 18 and 99")
+		return invalidListing("minimum_age_to_book must be between 18 and 99")
 	}
 	if input.Bedrooms < 0 || input.Bedrooms > 50 || input.Beds < 1 || input.Beds > 100 || input.Bathrooms < 0.5 || input.Bathrooms > 50 {
-		return input, invalidListing("bedroom, bed, or bathroom count is out of range")
+		return invalidListing("bedroom, bed, or bathroom count is out of range")
 	}
-	if len(input.Amenities) > 100 || len(input.Photos) > 100 || len(input.Rules) > 50 {
-		return input, invalidListing("too many amenities, photos, or rules")
-	}
+	return nil
+}
 
-	seenAmenities := map[Amenity]struct{}{}
-	amenities := make([]Amenity, 0, len(input.Amenities))
-	for _, amenity := range input.Amenities {
+func validateCollectionSizes(input CreateListingInput) error {
+	if len(input.Amenities) > 100 || len(input.Photos) > 100 || len(input.Rules) > 50 {
+		return invalidListing("too many amenities, photos, or rules")
+	}
+	return nil
+}
+
+// dedupeAmenities rejects anything not in the amenity catalog and silently
+// drops repeats, since a host resubmitting the same amenity twice isn't
+// worth failing the request over.
+func dedupeAmenities(input []Amenity) ([]Amenity, error) {
+	seen := map[Amenity]struct{}{}
+	amenities := make([]Amenity, 0, len(input))
+	for _, amenity := range input {
 		if !validAmenity(amenity) {
-			return input, invalidListing("unknown amenity %q", amenity)
+			return nil, invalidListing("unknown amenity %q", amenity)
 		}
-		if _, duplicate := seenAmenities[amenity]; duplicate {
+		if _, duplicate := seen[amenity]; duplicate {
 			continue
 		}
-		seenAmenities[amenity] = struct{}{}
+		seen[amenity] = struct{}{}
 		amenities = append(amenities, amenity)
 	}
-	input.Amenities = amenities
+	return amenities, nil
+}
 
+func validatePhotos(photos []CreateListingPhotoInput) error {
 	seenPositions := map[int]struct{}{}
-	for index := range input.Photos {
-		photo := &input.Photos[index]
+	for index := range photos {
+		photo := &photos[index]
 		photo.ObjectKey = strings.TrimSpace(photo.ObjectKey)
 		photo.AltText = strings.TrimSpace(photo.AltText)
 		if photo.ObjectKey == "" || len(photo.ObjectKey) > 1024 || len(photo.AltText) > 500 || photo.Position < 0 {
-			return input, invalidListing("photo metadata is invalid")
+			return invalidListing("photo metadata is invalid")
 		}
 		if _, duplicate := seenPositions[photo.Position]; duplicate {
-			return input, invalidListing("photo positions must be unique")
+			return invalidListing("photo positions must be unique")
 		}
 		seenPositions[photo.Position] = struct{}{}
 	}
-	for index := range input.Rules {
-		input.Rules[index].Title = strings.TrimSpace(input.Rules[index].Title)
-		input.Rules[index].Description = strings.TrimSpace(input.Rules[index].Description)
-		if input.Rules[index].Title == "" || len(input.Rules[index].Title) > 120 || len(input.Rules[index].Description) > 1000 {
-			return input, invalidListing("house rule is invalid")
+	return nil
+}
+
+func validateRules(rules []HouseRule) error {
+	for index := range rules {
+		rules[index].Title = strings.TrimSpace(rules[index].Title)
+		rules[index].Description = strings.TrimSpace(rules[index].Description)
+		if rules[index].Title == "" || len(rules[index].Title) > 120 || len(rules[index].Description) > 1000 {
+			return invalidListing("house rule is invalid")
 		}
 	}
-	return input, nil
+	return nil
 }
 
 func invalidListing(format string, values ...any) error {

@@ -178,23 +178,7 @@ func TestDatabaseSecurityBoundary(t *testing.T) {
 	})
 
 	t.Run("pooled session identity is scrubbed", func(t *testing.T) {
-		connection, err := appPool.Acquire(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := connection.Exec(
-			ctx,
-			"SELECT set_config('app.user_id', $1, false)",
-			attackerUserID,
-		); err != nil {
-			connection.Release()
-			t.Fatal(err)
-		}
-		if _, err := connection.Exec(ctx, "SET statement_timeout = 0"); err != nil {
-			connection.Release()
-			t.Fatal(err)
-		}
-		connection.Release()
+		tamperPooledConnection(t, ctx, appPool, attackerUserID)
 
 		var count int
 		if err := appPool.QueryRow(ctx, "SELECT count(*) FROM app.security_attack_accounts").Scan(&count); err != nil {
@@ -306,6 +290,26 @@ func insertAccount(
 	})
 	if err != nil {
 		t.Fatalf("insert test account %s: %v", email, err)
+	}
+}
+
+// tamperPooledConnection sets a fake user identity and disables the
+// statement timeout on a single pooled connection, then releases it back to
+// the pool - simulating a connection that was "contaminated" by a previous
+// request, so the test below can check the pool scrubs it clean on reuse.
+func tamperPooledConnection(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID string) {
+	t.Helper()
+	connection, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Release()
+
+	if _, err := connection.Exec(ctx, "SELECT set_config('app.user_id', $1, false)", userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(ctx, "SET statement_timeout = 0"); err != nil {
+		t.Fatal(err)
 	}
 }
 
