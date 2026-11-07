@@ -71,8 +71,10 @@ disposable local container and cannot inherit production credentials.
   20-connection limit
 - `FIREBASE_PROJECT_ID`: Firebase project that issues the client ID tokens
 - `FIREBASE_CREDENTIALS_JSON`: Firebase Admin service-account JSON, either raw
-  or base64-encoded. The API verifies each bearer token with it and maps the
-  Firebase UID to a stable `app.accounts` row on first use.
+  or base64-encoded. Raw JSON may be wrapped in single quotes and span several
+  lines; double quotes also work but must escape every JSON quote. The API
+  verifies each bearer token with it and maps the Firebase UID to a stable
+  `app.accounts` row on first use.
 - `PORT`: HTTP port
 
 ## Tests
